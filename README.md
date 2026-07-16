@@ -1,144 +1,127 @@
-# ESP32-S3 Environmental Alarm System
+# ESP32-S3 Real-Time Environmental Alarm System
 
-This is a small real-time monitoring system built with an ESP32-S3. It reads temperature, humidity, and distance, displays the results on an LCD, and turns on an LED when an alarm condition is met.
+This project is a real-time monitoring and alarm system built with an ESP32-S3.
 
-A push button is used to switch between different alarm modes.
+It measures temperature, humidity, and object distance. The current readings and system status are shown on a 16x2 LCD. A push button switches between five monitoring modes, while green, yellow, and red LEDs indicate the current alarm level.
 
-## What it does
+## Features
 
-The system supports five modes:
+- Temperature and humidity measurement using an AM2320
+- Distance measurement using an HC-SR04
+- Five selectable monitoring modes
+- Green, yellow, and red status LEDs
+- 16x2 LCD output
+- Push-button mode selection
+- FreeRTOS tasks pinned across both ESP32-S3 cores
+- Queue-based communication between sensor, control, and display tasks
+- Invalid sensor reading and no-echo detection
 
-1. Distance alarm
-2. Temperature alarm
-3. Humidity alarm
-4. Temperature and humidity alarm
-5. All sensors enabled
+## Monitoring Modes
 
-The LCD shows the current sensor readings and the selected mode.
+The push button cycles through five modes:
+
+1. Distance
+2. Temperature
+3. Humidity
+4. Temperature and humidity
+5. Full monitoring
+
+The selected mode determines which sensor readings are used to calculate the current system status.
+
+## System Status
+
+The system uses three status levels:
+
+| Status | LED | Meaning |
+|---|---|---|
+| Normal | Green | Sensor values are inside the normal range |
+| Warning | Yellow | One or more values are near the configured limit |
+| Alert | Red | A value is outside the allowed range or a sensor reading is invalid |
 
 ## Hardware
 
-* ESP32-S3 development board
-* AM2320 temperature and humidity sensor
-* HC-SR04 ultrasonic sensor
-* 16×2 I2C LCD
-* Push button
-* LED and resistor
-* Breadboard and jumper wires
+- ESP32-S3 development board
+- AM2320 temperature and humidity sensor
+- HC-SR04 ultrasonic distance sensor
+- 16x2 I2C LCD
+- Push button
+- Green LED
+- Yellow LED
+- Red LED
+- Current-limiting resistors
+- Breadboard and jumper wires
 
-## Pin setup
+## Pin Configuration
 
-### LCD
+| Component | Signal | ESP32-S3 Pin |
+|---|---|---|
+| LCD and AM2320 | SDA | GPIO 4 |
+| LCD and AM2320 | SCL | GPIO 5 |
+| HC-SR04 | Trigger | GPIO 16 |
+| HC-SR04 | Echo | GPIO 15 |
+| Green LED | Output | GPIO 10 |
+| Yellow LED | Output | GPIO 11 |
+| Red LED | Output | GPIO 13 |
+| Push Button | Input | GPIO 12 |
 
-| Signal  | ESP32-S3 Pin |
-| ------- | ------------ |
-| SDA     | GPIO 4       |
-| SCL     | GPIO 5       |
-| Address | `0x27`       |
+The LCD uses I2C address `0x27`.
 
-### AM2320
+The LCD and AM2320 share the same I2C bus on GPIO 4 and GPIO 5.
 
-| Signal | ESP32-S3 Pin |
-| ------ | ------------ |
-| SDA    | GPIO 18      |
-| SCL    | GPIO 17      |
+## Software Design
 
-The LCD and AM2320 originally shared the same I2C bus. This caused unstable AM2320 readings, so I moved the sensor to a second I2C bus.
+The firmware is written in C++ using the Arduino ESP32 framework and FreeRTOS.
 
-The remaining pin assignments can be found near the top of the firmware file.
+Five tasks are used:
 
-## Software
+### AM2320Task
 
-The program is written in C++ using the Arduino ESP32 framework and FreeRTOS.
+Reads temperature and humidity once per second.
 
-Different tasks are used for:
+If either reading is invalid, the task sends an error state instead of treating the value as valid sensor data.
 
-* Reading temperature and humidity
-* Measuring distance
-* Checking the push button
-* Updating the LCD
-* Controlling the alarm LED
+### UltrasonicTask
 
-The tasks run at different intervals so a slow sensor read does not stop the rest of the system.
+Measures distance using the HC-SR04 every 250 milliseconds.
 
-## Project structure
+Five samples are collected and averaged. Invalid readings and missing echo pulses are ignored.
+
+### ControlTask
+
+Receives sensor messages through a FreeRTOS queue.
+
+It stores the latest valid readings, checks the selected monitoring mode, calculates the system status, and updates the LEDs.
+
+### LCDTask
+
+Receives the latest display data through a single-item queue.
+
+It shows the selected mode, alarm level, and relevant sensor readings on the LCD.
+
+### ButtonTask
+
+Reads the push button and changes the monitoring mode.
+
+A debounce delay is used so that one physical button press only changes the mode once.
+
+## Task Distribution
+
+The sensor tasks run on Core 0:
+
+- `AM2320Task`
+- `UltrasonicTask`
+
+The control and interface tasks run on Core 1:
+
+- `ControlTask`
+- `LCDTask`
+- `ButtonTask`
+
+This keeps sensor reading separate from display and control work.
+
+## Queue Communication
+
+Two FreeRTOS queues are used:
 
 ```text
-esp32s3-realtime-environmental-alarm/
-├── README.md
-├── firmware/
-│   └── environmental_alarm.ino
-├── docs/
-│   ├── architecture.md
-│   └── wiring.md
-├── images/
-│   ├── assembled_system.jpg
-│   └── lcd_display.jpg
-└── report/
-    └── project_summary.pdf
-```
-
-## Required libraries
-
-The following Arduino libraries are used:
-
-* `LiquidCrystal_I2C`
-* `Adafruit AM2320`
-* `Adafruit Unified Sensor`
-
-FreeRTOS is included with the ESP32 Arduino package.
-
-## Running the project
-
-1. Install Arduino IDE.
-2. Install the ESP32 board package.
-3. Select `ESP32-S3 Dev Module`.
-4. Install the required libraries.
-5. Open `firmware/environmental_alarm.ino`.
-6. Select the correct serial port.
-7. Compile and upload the program.
-8. Open Serial Monitor at `115200` baud.
-
-Example output:
-
-```text
-AM2320 OK | Temp: 27.60 C | Humidity: 34.00 %
-HC-SR04 Distance: 17.75 cm
-```
-
-## Problems I ran into
-
-### AM2320 communication errors
-
-The AM2320 sometimes returned an error when it shared the I2C bus with the LCD.
-
-I fixed most of the issue by using separate I2C buses:
-
-* LCD on GPIO 4 and GPIO 5
-* AM2320 on GPIO 18 and GPIO 17
-
-### HC-SR04 no-echo readings
-
-The ultrasonic sensor sometimes returned no echo because of loose wiring or an invalid pulse measurement.
-
-The program checks for this condition instead of using it as a real distance value.
-
-### Button input
-
-A single button press could be detected more than once because of switch bouncing. A short debounce delay was added so each press changes the mode only once.
-
-## Possible improvements
-
-* Use FreeRTOS queues instead of shared global variables
-* Add mutex protection for the LCD
-* Save alarm thresholds in flash memory
-* Allow the user to change thresholds
-* Add Wi-Fi monitoring
-* Record sensor readings over time
-* Move the circuit from a breadboard to a PCB
-
-## Author
-
-Rui Kong
-Electrical and Computer Engineering
-University of Washington
+sensorQueue
